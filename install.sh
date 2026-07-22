@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
 REPO_OWNER="${REPO_OWNER:-ACTVTEAM}"
-REPO_NAME="${REPO_NAME:-apasih-qoupay}"
+REPO_NAME="${REPO_NAME:-apasih-qoupaylu}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 BACKUP_DIR="${BACKUP_DIR:-/root/ptero-backup-manager-backups}"
 ZIP_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/${REPO_BRANCH}.zip"
