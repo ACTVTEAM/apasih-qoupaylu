@@ -7,6 +7,10 @@ REPO_NAME="${REPO_NAME:-apasih-qoupaylu}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 BACKUP_DIR="${BACKUP_DIR:-/root/ptero-backup-manager-backups}"
 ZIP_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/${REPO_BRANCH}.zip"
+RAW_BASE_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}"
+REMOTE_INSTALL_URL="${RAW_BASE_URL}/install.sh"
+REMOTE_VERSION_URL="${RAW_BASE_URL}/version.txt"
+SELF_INSTALL_PATH="${SELF_INSTALL_PATH:-/root/ptero-backup-manager-install.sh}"
 
 TMP=""
 SRC=""
@@ -63,6 +67,132 @@ on_error(){
 }
 trap 'on_error "$LINENO"' ERR
 trap 'leave_maintenance; cleanup_tmp' EXIT
+
+local_version(){
+    if [[ -f "$PANEL_DIR/.ptero-backup-manager-version" ]]; then
+        tr -d '\r\n ' < "$PANEL_DIR/.ptero-backup-manager-version"
+    elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/version.txt" ]]; then
+        tr -d '\r\n ' < "$(dirname "${BASH_SOURCE[0]}")/version.txt"
+    else
+        # Installer package version.
+        echo "1.0.4"
+    fi
+}
+
+remote_version(){
+    [[ "$REPO_OWNER" != "YOUR_GITHUB_USERNAME" ]] || {
+        echo ""
+        return 0
+    }
+
+    curl -fsSL --connect-timeout 10 "$REMOTE_VERSION_URL" 2>/dev/null \
+        | tr -d '\r\n ' || true
+}
+
+version_gt(){
+    # Returns success when $1 > $2 using version-sort.
+    [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" == "$1" ]]
+}
+
+check_script_update(){
+    [[ "$REPO_OWNER" != "YOUR_GITHUB_USERNAME" ]] || die "Edit REPO_OWNER in install.sh first."
+
+    local current latest
+    current="$(local_version)"
+    latest="$(remote_version)"
+
+    echo "Current installer/package : ${current}"
+    echo "Latest GitHub version     : ${latest:-unknown}"
+
+    if [[ -z "$latest" ]]; then
+        red "Could not read version.txt from GitHub."
+        return 1
+    fi
+
+    if [[ "$current" == "$latest" ]]; then
+        green "Installer is already up to date."
+        return 0
+    fi
+
+    if version_gt "$latest" "$current"; then
+        yellow "New installer version is available: $current -> $latest"
+    else
+        yellow "GitHub version differs from local version: $current -> $latest"
+    fi
+}
+
+update_installer_script(){
+    [[ "$REPO_OWNER" != "YOUR_GITHUB_USERNAME" ]] || die "Edit REPO_OWNER in install.sh first."
+
+    local current latest temp_script target running_script
+    current="$(local_version)"
+    latest="$(remote_version)"
+
+    [[ -n "$latest" ]] || die "Could not retrieve remote version.txt."
+
+    echo "Current : $current"
+    echo "Latest  : $latest"
+
+    if [[ "$current" == "$latest" ]]; then
+        green "Installer script is already the latest version."
+        return 0
+    fi
+
+    temp_script="$(mktemp /tmp/ptero-backup-manager-install.XXXXXX.sh)"
+
+    info "Downloading latest install.sh..."
+    curl -fL --retry 3 --connect-timeout 15 "$REMOTE_INSTALL_URL" -o "$temp_script"
+
+    # Reject HTML/error pages that curl may receive from a misconfigured repository.
+    if ! head -n1 "$temp_script" | grep -q '^#!/'; then
+        rm -f "$temp_script"
+        die "Downloaded file does not look like a shell script."
+    fi
+
+    info "Validating Bash syntax..."
+    if ! bash -n "$temp_script"; then
+        rm -f "$temp_script"
+        die "Latest install.sh failed Bash syntax validation. Existing installer was not changed."
+    fi
+
+    running_script="${BASH_SOURCE[0]}"
+
+    # A script executed using bash <(curl ...) usually lives under /dev/fd/*.
+    # Such a file cannot be updated permanently, so use a stable root path.
+    if [[ "$running_script" == /dev/fd/* || "$running_script" == /proc/* || ! -f "$running_script" ]]; then
+        target="$SELF_INSTALL_PATH"
+        yellow "Installer is running from process substitution."
+        yellow "Saving the persistent updated installer to: $target"
+    else
+        target="$(readlink -f "$running_script")"
+    fi
+
+    mkdir -p "$(dirname "$target")"
+
+    if [[ -f "$target" ]]; then
+        cp -f "$target" "${target}.bak" || true
+    fi
+
+    install -m 0755 "$temp_script" "$target"
+    rm -f "$temp_script"
+
+    green "Installer script updated successfully."
+    echo "Saved to : $target"
+    echo "Version  : $latest"
+
+    echo
+    read -rp "Start the updated installer now? [Y/n]: " answer
+    case "${answer:-Y}" in
+        n|N)
+            yellow "Run it later with:"
+            echo "  bash $target"
+            ;;
+        *)
+            green "Starting updated installer..."
+            exec bash "$target"
+            ;;
+    esac
+}
 
 backup_panel(){
     mkdir -p "$BACKUP_DIR"
@@ -516,22 +646,26 @@ PY
 while true; do
     clear
     echo "============================================"
-    echo " PTERODACTYL BACKUP MANAGER v1.0.2"
+    echo " PTERODACTYL BACKUP MANAGER v1.0.4"
     echo "============================================"
     echo "[1] Install"
-    echo "[2] Update/Reinstall"
-    echo "[3] Repair Installation"
-    echo "[4] Status"
-    echo "[5] Uninstall"
+    echo "[2] Update/Reinstall Module"
+    echo "[3] Update Installer Script"
+    echo "[4] Check Installer Update"
+    echo "[5] Repair Installation"
+    echo "[6] Status"
+    echo "[7] Uninstall"
     echo "[x] Exit"
     read -rp "Choose: " c
 
     case "$c" in
         1) install ;;
         2) update ;;
-        3) repair ;;
-        4) status ;;
-        5) uninstall ;;
+        3) update_installer_script ;;
+        4) check_script_update ;;
+        5) repair ;;
+        6) status ;;
+        7) uninstall ;;
         x|X) exit 0 ;;
         *) yellow "Invalid choice." ;;
     esac
