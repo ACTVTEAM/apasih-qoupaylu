@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 PANEL_DIR="${PANEL_DIR:-/var/www/pterodactyl}"
 REPO_OWNER="${REPO_OWNER:-ACTVTEAM}"
-REPO_NAME="${REPO_NAME:-apasih-qoupaylu}"
+REPO_NAME="${REPO_NAME:apasih-qoupaylu}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 BACKUP_DIR="${BACKUP_DIR:-/root/ptero-backup-manager-backups}"
 ZIP_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/${REPO_BRANCH}.zip"
@@ -176,7 +176,7 @@ local_version(){
         tr -d '\r\n ' < "$(dirname "${BASH_SOURCE[0]}")/version.txt"
     else
         # Installer package version.
-        echo "1.0.6"
+        echo "1.0.8"
     fi
 }
 
@@ -742,19 +742,29 @@ check_backend_routes(){
         return 1
     fi
 
-    if ! grep -q '/api/client/servers/{server}/backup-manager' /tmp/ptero-backup-manager-routes.txt; then
+    # Laravel route:list prints URI values without a leading slash.
+    if ! grep -Fq 'api/client/servers/{server}/backup-manager' /tmp/ptero-backup-manager-routes.txt; then
         red "Client Backup Manager API route is missing."
         cat /tmp/ptero-backup-manager-routes.txt || true
         return 1
     fi
 
-    if ! grep -q 'admin/backup-manager' /tmp/ptero-backup-manager-routes.txt; then
+    if ! grep -Fq 'admin/backup-manager' /tmp/ptero-backup-manager-routes.txt; then
         red "Admin Backup Manager route is missing."
         cat /tmp/ptero-backup-manager-routes.txt || true
         return 1
     fi
 
-    green "Backup Manager backend routes: OK"
+    local client_route_count
+    client_route_count="$(grep -Fc 'api/client/servers/{server}/backup-manager' /tmp/ptero-backup-manager-routes.txt || true)"
+
+    if (( client_route_count < 5 )); then
+        yellow "Only ${client_route_count}/5 expected client Backup Manager routes were detected."
+        cat /tmp/ptero-backup-manager-routes.txt || true
+        return 1
+    fi
+
+    green "Backup Manager backend routes: OK (${client_route_count} client routes)"
 }
 
 full_health_check(){
@@ -850,7 +860,7 @@ PY
 while true; do
     clear
     echo "============================================"
-    echo " PTERODACTYL BACKUP MANAGER v1.0.6"
+    echo " PTERODACTYL BACKUP MANAGER v1.0.8"
     echo "============================================"
     echo "[1] Install"
     echo "[2] Update/Reinstall Module"
