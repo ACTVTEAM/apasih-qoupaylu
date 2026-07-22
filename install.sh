@@ -11,6 +11,10 @@ RAW_BASE_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REP
 REMOTE_INSTALL_URL="${RAW_BASE_URL}/install.sh"
 REMOTE_VERSION_URL="${RAW_BASE_URL}/version.txt"
 SELF_INSTALL_PATH="${SELF_INSTALL_PATH:-/root/ptero-backup-manager-install.sh}"
+NODE_REQUIRED_MAJOR="${NODE_REQUIRED_MAJOR:-22}"
+YARN_REQUIRED_VERSION="${YARN_REQUIRED_VERSION:-1.22.22}"
+BUILD_LOG="${BUILD_LOG:-/tmp/ptero-backup-manager-build.log}"
+WINGS_WAS_ACTIVE="unknown"
 
 TMP=""
 SRC=""
@@ -68,6 +72,103 @@ on_error(){
 trap 'on_error "$LINENO"' ERR
 trap 'leave_maintenance; cleanup_tmp' EXIT
 
+capture_wings_state(){
+    WINGS_WAS_ACTIVE="not-installed"
+
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if systemctl list-unit-files --type=service 2>/dev/null | grep -q '^wings\.service'; then
+        if systemctl is-active --quiet wings; then
+            WINGS_WAS_ACTIVE="active"
+            green "Wings service: active"
+        else
+            WINGS_WAS_ACTIVE="inactive"
+            yellow "Wings service is currently inactive before installation."
+        fi
+    fi
+}
+
+check_wings_health(){
+    echo
+    info "Checking Pterodactyl Node/Wings health..."
+
+    if ! command -v systemctl >/dev/null 2>&1; then
+        yellow "systemctl unavailable; local Wings check skipped."
+        return 0
+    fi
+
+    if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q '^wings\.service'; then
+        yellow "Wings is not installed on this Panel machine; remote Nodes are not modified."
+        return 0
+    fi
+
+    if systemctl is-active --quiet wings; then
+        green "Wings service: ACTIVE"
+        return 0
+    fi
+
+    if [[ "$WINGS_WAS_ACTIVE" == "active" ]]; then
+        yellow "Wings was active before installation but is now inactive."
+        yellow "Attempting safe Wings restart..."
+        systemctl restart wings
+        sleep 2
+
+        if systemctl is-active --quiet wings; then
+            green "Wings recovered successfully: ACTIVE"
+            return 0
+        fi
+
+        red "Wings could not be recovered automatically."
+        systemctl --no-pager --full status wings 2>/dev/null | tail -n 25 || true
+        return 1
+    fi
+
+    yellow "Wings was already inactive before installation; it will not be force-started."
+    return 0
+}
+
+node_major(){
+    if ! command -v node >/dev/null 2>&1; then
+        echo "0"
+        return
+    fi
+    node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo "0"
+}
+
+node_health_check(){
+    local major
+    major="$(node_major)"
+
+    echo
+    info "Checking frontend build tools..."
+
+    if ! command -v node >/dev/null 2>&1; then
+        yellow "Node.js: not installed"
+        return 1
+    fi
+
+    if (( major < NODE_REQUIRED_MAJOR )); then
+        yellow "Node.js: $(node -v) (requires v${NODE_REQUIRED_MAJOR}+)"
+        return 1
+    fi
+    green "Node.js: $(node -v)"
+
+    if ! command -v npm >/dev/null 2>&1; then
+        yellow "npm: missing"
+        return 1
+    fi
+    green "npm: $(npm -v)"
+
+    if ! command -v yarn >/dev/null 2>&1; then
+        yellow "Yarn: missing"
+        return 1
+    fi
+    green "Yarn: $(yarn -v)"
+    return 0
+}
+
 local_version(){
     if [[ -f "$PANEL_DIR/.ptero-backup-manager-version" ]]; then
         tr -d '\r\n ' < "$PANEL_DIR/.ptero-backup-manager-version"
@@ -75,7 +176,7 @@ local_version(){
         tr -d '\r\n ' < "$(dirname "${BASH_SOURCE[0]}")/version.txt"
     else
         # Installer package version.
-        echo "1.0.4"
+        echo "1.0.5"
     fi
 }
 
@@ -451,58 +552,105 @@ EOF
     green "Cron and Telegram service installed."
 }
 
-ensure_frontend_tools(){
-    if command -v node >/dev/null 2>&1 && command -v yarn >/dev/null 2>&1; then
-        green "Node.js $(node -v) and Yarn $(yarn -v) detected."
-        return
-    fi
-
-    yellow "Node.js/Yarn not found. Installing frontend build tools..."
+install_nodejs_22(){
+    yellow "Installing/upgrading Node.js build tools..."
 
     if command -v apt-get >/dev/null 2>&1; then
-        apt-get update
-        apt-get install -y ca-certificates curl gnupg
-
-        # Official Pterodactyl build documentation currently uses Node.js 22.
-        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-        apt-get install -y nodejs
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq ca-certificates curl gnupg >/dev/null
+        curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
+        apt-get install -y -qq nodejs >/dev/null
     elif command -v dnf >/dev/null 2>&1; then
-        curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
-        dnf install -y nodejs
+        curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
+        dnf install -y -q nodejs >/dev/null
     elif command -v yum >/dev/null 2>&1; then
-        curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
-        yum install -y nodejs
+        curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
+        yum install -y -q nodejs >/dev/null
     else
-        die "Unsupported package manager. Install Node.js 22 and Yarn manually."
+        die "Unsupported package manager. Install Node.js 22 manually."
     fi
 
-    command -v npm >/dev/null 2>&1 || die "npm was not installed with Node.js."
-
-    npm install -g yarn
-
     command -v node >/dev/null 2>&1 || die "Node.js installation failed."
-    command -v yarn >/dev/null 2>&1 || die "Yarn installation failed."
+    command -v npm >/dev/null 2>&1 || die "npm is missing after Node.js installation."
 
-    green "Installed Node.js $(node -v) and Yarn $(yarn -v)."
+    local major
+    major="$(node_major)"
+    (( major >= NODE_REQUIRED_MAJOR )) || die "Installed Node.js $(node -v) is too old."
+
+    green "Node.js ready: $(node -v)"
+}
+
+ensure_yarn(){
+    if command -v yarn >/dev/null 2>&1; then
+        green "Yarn ready: $(yarn -v)"
+        return 0
+    fi
+
+    yellow "Installing Yarn ${YARN_REQUIRED_VERSION}..."
+    : > "$BUILD_LOG"
+
+    if ! npm install -g "yarn@${YARN_REQUIRED_VERSION}" --force >"$BUILD_LOG" 2>&1; then
+        red "Yarn installation failed."
+        tail -n 30 "$BUILD_LOG" || true
+        return 1
+    fi
+
+    command -v yarn >/dev/null 2>&1 || die "Yarn is not available after installation."
+    green "Yarn ready: $(yarn -v)"
+}
+
+ensure_frontend_tools(){
+    local major
+    major="$(node_major)"
+
+    if (( major < NODE_REQUIRED_MAJOR )); then
+        install_nodejs_22
+    else
+        green "Node.js ready: $(node -v)"
+    fi
+
+    command -v npm >/dev/null 2>&1 || die "npm is missing."
+    ensure_yarn
+    node_health_check || die "Frontend build tool health check failed."
 }
 
 build_frontend(){
     cd "$PANEL_DIR"
 
     ensure_frontend_tools
-
-    # Pterodactyl's documented requirement for Node.js 17+.
     export NODE_OPTIONS="${NODE_OPTIONS:---openssl-legacy-provider}"
 
-    info "Installing frontend dependencies..."
-    yarn install --frozen-lockfile || yarn install
+    : > "$BUILD_LOG"
 
-    info "Building frontend..."
-    if yarn run 2>/dev/null | grep -q 'build:production'; then
-        yarn build:production
-    else
-        yarn build
+    info "Installing frontend dependencies..."
+    if ! yarn install --frozen-lockfile >"$BUILD_LOG" 2>&1; then
+        yellow "Frozen lockfile install failed; retrying standard yarn install..."
+        if ! yarn install >>"$BUILD_LOG" 2>&1; then
+            red "Frontend dependency installation failed."
+            tail -n 40 "$BUILD_LOG" || true
+            return 1
+        fi
     fi
+
+    info "Building frontend assets..."
+    if yarn run 2>/dev/null | grep -q 'build:production'; then
+        if ! yarn build:production >>"$BUILD_LOG" 2>&1; then
+            red "Frontend production build failed."
+            tail -n 50 "$BUILD_LOG" || true
+            return 1
+        fi
+    else
+        if ! yarn build >>"$BUILD_LOG" 2>&1; then
+            red "Frontend build failed."
+            tail -n 50 "$BUILD_LOG" || true
+            return 1
+        fi
+    fi
+
+    unset NODE_OPTIONS || true
+    green "Frontend build: SUCCESS"
+    green "Node.js: $(node -v) | Yarn: $(yarn -v)"
 }
 
 finish(){
@@ -522,6 +670,7 @@ finish(){
 }
 
 install(){
+    capture_wings_state
     backup_panel
     download
     snapshot_core_files
@@ -532,6 +681,7 @@ install(){
     install_services
 
     leave_maintenance
+    check_wings_health
     PATCH_BACKUP_DIR=""
     cleanup_tmp
     TMP=""
@@ -559,6 +709,7 @@ status(){
 }
 
 repair(){
+    capture_wings_state
     yellow "Repairing integration patches..."
     download
     snapshot_core_files
@@ -569,11 +720,35 @@ repair(){
     install_services
 
     leave_maintenance
+    check_wings_health
     PATCH_BACKUP_DIR=""
     cleanup_tmp
     TMP=""
 
     green "Repair completed."
+}
+
+full_health_check(){
+    capture_wings_state
+
+    echo "============================================"
+    echo " NODE.JS / YARN / WINGS HEALTH CHECK"
+    echo "============================================"
+
+    if node_health_check; then
+        green "Frontend build tools are healthy."
+    else
+        yellow "Frontend tools need repair."
+        read -rp "Repair Node.js/Yarn now? [Y/n]: " answer
+        case "${answer:-Y}" in
+            n|N) ;;
+            *) ensure_frontend_tools ;;
+        esac
+    fi
+
+    check_wings_health
+    echo
+    green "Health check finished."
 }
 
 uninstall(){
@@ -646,7 +821,7 @@ PY
 while true; do
     clear
     echo "============================================"
-    echo " PTERODACTYL BACKUP MANAGER v1.0.4"
+    echo " PTERODACTYL BACKUP MANAGER v1.0.5"
     echo "============================================"
     echo "[1] Install"
     echo "[2] Update/Reinstall Module"
@@ -654,7 +829,8 @@ while true; do
     echo "[4] Check Installer Update"
     echo "[5] Repair Installation"
     echo "[6] Status"
-    echo "[7] Uninstall"
+    echo "[7] Node.js / Yarn / Wings Health Check"
+    echo "[8] Uninstall"
     echo "[x] Exit"
     read -rp "Choose: " c
 
@@ -665,7 +841,8 @@ while true; do
         4) check_script_update ;;
         5) repair ;;
         6) status ;;
-        7) uninstall ;;
+        7) full_health_check ;;
+        8) uninstall ;;
         x|X) exit 0 ;;
         *) yellow "Invalid choice." ;;
     esac
