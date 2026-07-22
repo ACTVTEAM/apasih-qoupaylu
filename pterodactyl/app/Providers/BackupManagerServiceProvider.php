@@ -11,7 +11,7 @@ use Pterodactyl\Http\Controllers\Api\Client\Servers\BackupManagerController as C
 use Pterodactyl\Http\Middleware\AdminAuthenticate;
 use Pterodactyl\Http\Middleware\Api\Client\Server\AuthenticateServerAccess;
 use Pterodactyl\Http\Middleware\Api\Client\Server\ResourceBelongsToServer;
-use Pterodactyl\Http\Middleware\Api\Client\Server\ServerSubject;
+use Pterodactyl\Http\Middleware\Activity\ServerSubject;
 use Pterodactyl\Http\Middleware\RequireTwoFactorAuthentication;
 
 class BackupManagerServiceProvider extends ServiceProvider

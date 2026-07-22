@@ -176,7 +176,7 @@ local_version(){
         tr -d '\r\n ' < "$(dirname "${BASH_SOURCE[0]}")/version.txt"
     else
         # Installer package version.
-        echo "1.0.5"
+        echo "1.0.6"
     fi
 }
 
@@ -682,6 +682,7 @@ install(){
 
     leave_maintenance
     check_wings_health
+    check_backend_routes
     PATCH_BACKUP_DIR=""
     cleanup_tmp
     TMP=""
@@ -721,11 +722,39 @@ repair(){
 
     leave_maintenance
     check_wings_health
+    check_backend_routes
     PATCH_BACKUP_DIR=""
     cleanup_tmp
     TMP=""
 
     green "Repair completed."
+}
+
+check_backend_routes(){
+    echo
+    info "Checking Backup Manager backend routes..."
+
+    cd "$PANEL_DIR"
+
+    if ! php artisan route:list --path=backup-manager > /tmp/ptero-backup-manager-routes.txt 2>&1; then
+        red "Laravel could not enumerate Backup Manager routes."
+        tail -n 40 /tmp/ptero-backup-manager-routes.txt || true
+        return 1
+    fi
+
+    if ! grep -q '/api/client/servers/{server}/backup-manager' /tmp/ptero-backup-manager-routes.txt; then
+        red "Client Backup Manager API route is missing."
+        cat /tmp/ptero-backup-manager-routes.txt || true
+        return 1
+    fi
+
+    if ! grep -q 'admin/backup-manager' /tmp/ptero-backup-manager-routes.txt; then
+        red "Admin Backup Manager route is missing."
+        cat /tmp/ptero-backup-manager-routes.txt || true
+        return 1
+    fi
+
+    green "Backup Manager backend routes: OK"
 }
 
 full_health_check(){
@@ -821,7 +850,7 @@ PY
 while true; do
     clear
     echo "============================================"
-    echo " PTERODACTYL BACKUP MANAGER v1.0.5"
+    echo " PTERODACTYL BACKUP MANAGER v1.0.6"
     echo "============================================"
     echo "[1] Install"
     echo "[2] Update/Reinstall Module"
