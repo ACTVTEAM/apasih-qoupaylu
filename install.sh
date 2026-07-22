@@ -321,25 +321,57 @@ EOF
     green "Cron and Telegram service installed."
 }
 
+ensure_frontend_tools(){
+    if command -v node >/dev/null 2>&1 && command -v yarn >/dev/null 2>&1; then
+        green "Node.js $(node -v) and Yarn $(yarn -v) detected."
+        return
+    fi
+
+    yellow "Node.js/Yarn not found. Installing frontend build tools..."
+
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update
+        apt-get install -y ca-certificates curl gnupg
+
+        # Official Pterodactyl build documentation currently uses Node.js 22.
+        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+        apt-get install -y nodejs
+    elif command -v dnf >/dev/null 2>&1; then
+        curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
+        dnf install -y nodejs
+    elif command -v yum >/dev/null 2>&1; then
+        curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
+        yum install -y nodejs
+    else
+        die "Unsupported package manager. Install Node.js 22 and Yarn manually."
+    fi
+
+    command -v npm >/dev/null 2>&1 || die "npm was not installed with Node.js."
+
+    npm install -g yarn
+
+    command -v node >/dev/null 2>&1 || die "Node.js installation failed."
+    command -v yarn >/dev/null 2>&1 || die "Yarn installation failed."
+
+    green "Installed Node.js $(node -v) and Yarn $(yarn -v)."
+}
+
 build_frontend(){
     cd "$PANEL_DIR"
 
-    if command -v yarn >/dev/null 2>&1; then
-        info "Installing frontend dependencies..."
-        yarn install --frozen-lockfile || yarn install
+    ensure_frontend_tools
 
-        info "Building frontend..."
-        if yarn run 2>/dev/null | grep -q 'build:production'; then
-            yarn build:production
-        else
-            yarn build
-        fi
-    elif command -v npm >/dev/null 2>&1; then
-        info "Yarn not found; using npm."
-        npm install
-        npm run build
+    # Pterodactyl's documented requirement for Node.js 17+.
+    export NODE_OPTIONS="${NODE_OPTIONS:---openssl-legacy-provider}"
+
+    info "Installing frontend dependencies..."
+    yarn install --frozen-lockfile || yarn install
+
+    info "Building frontend..."
+    if yarn run 2>/dev/null | grep -q 'build:production'; then
+        yarn build:production
     else
-        die "Neither yarn nor npm is installed; frontend cannot be built."
+        yarn build
     fi
 }
 
@@ -484,7 +516,7 @@ PY
 while true; do
     clear
     echo "============================================"
-    echo " PTERODACTYL BACKUP MANAGER v1.0.1"
+    echo " PTERODACTYL BACKUP MANAGER v1.0.2"
     echo "============================================"
     echo "[1] Install"
     echo "[2] Update/Reinstall"
