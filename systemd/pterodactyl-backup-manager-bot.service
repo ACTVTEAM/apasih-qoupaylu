@@ -1,0 +1,15 @@
+[Unit]
+Description=Pterodactyl Backup Manager Telegram Bot
+After=network-online.target
+
+[Service]
+Type=simple
+User=__WEB_USER__
+Group=__WEB_GROUP__
+WorkingDirectory=__PANEL_DIR__
+ExecStart=/usr/bin/php __PANEL_DIR__/artisan backup-manager:telegram-bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

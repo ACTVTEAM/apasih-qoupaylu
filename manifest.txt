@@ -1,0 +1,15 @@
+app/Models/BackupManagerSetting.php
+app/Models/BackupManagerServerSetting.php
+app/Models/BackupManagerTelegramAccount.php
+app/Models/BackupManagerTelegramVerification.php
+app/Models/BackupManagerRun.php
+app/Services/BackupManager/TelegramService.php
+app/Services/BackupManager/AutomaticBackupService.php
+app/Console/Commands/BackupManagerRunCommand.php
+app/Console/Commands/BackupManagerTelegramBotCommand.php
+app/Http/Controllers/Api/Client/Servers/BackupManagerController.php
+app/Http/Controllers/Admin/BackupManagerController.php
+app/Providers/BackupManagerServiceProvider.php
+database/migrations/backup-manager/2026_07_22_000001_create_backup_manager_tables.php
+resources/views/backup-manager/admin/index.blade.php
+resources/scripts/components/server/backup-manager/AutoBackupContainer.tsx
